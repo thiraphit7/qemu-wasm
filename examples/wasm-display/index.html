@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QEMU WASM - Graphical Display</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: #16213e;
+            padding: 1rem 2rem;
+            border-bottom: 1px solid #0f3460;
+        }
+
+        header h1 {
+            font-size: 1.5rem;
+            font-weight: 500;
+        }
+
+        header p {
+            color: #888;
+            font-size: 0.9rem;
+            margin-top: 0.25rem;
+        }
+
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        #display-container {
+            background: #000;
+            border: 2px solid #0f3460;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            position: relative;
+        }
+
+        #qemu-display {
+            display: block;
+            background: #000;
+        }
+
+        #loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid #333;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        #loading-overlay p {
+            margin-top: 1rem;
+            color: #888;
+        }
+
+        #status-bar {
+            margin-top: 1rem;
+            padding: 0.5rem 1rem;
+            background: #16213e;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            display: flex;
+            gap: 2rem;
+        }
+
+        #status-bar span {
+            color: #888;
+        }
+
+        #status-bar strong {
+            color: #e94560;
+        }
+
+        footer {
+            background: #16213e;
+            padding: 1rem 2rem;
+            text-align: center;
+            font-size: 0.85rem;
+            color: #666;
+            border-top: 1px solid #0f3460;
+        }
+
+        footer a {
+            color: #e94560;
+            text-decoration: none;
+        }
+
+        .controls {
+            margin-top: 1rem;
+            display: flex;
+            gap: 1rem;
+        }
+
+        .controls button {
+            padding: 0.5rem 1rem;
+            background: #e94560;
+            border: none;
+            border-radius: 4px;
+            color: white;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background 0.2s;
+        }
+
+        .controls button:hover {
+            background: #ff6b8a;
+        }
+
+        .controls button:disabled {
+            background: #333;
+            cursor: not-allowed;
+        }
+
+        #terminal-container {
+            display: none;
+            margin-top: 1rem;
+            width: 100%;
+            max-width: 800px;
+        }
+
+        #terminal {
+            height: 200px;
+            background: #000;
+            border: 1px solid #333;
+            border-radius: 4px;
+        }
+    </style>
+    <link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css" />
+</head>
+<body>
+    <header>
+        <h1>QEMU WASM - Graphical Display</h1>
+        <p>Hardware virtualization running in your browser via WebAssembly</p>
+    </header>
+
+    <main>
+        <div id="display-container">
+            <canvas id="qemu-display" width="800" height="600"></canvas>
+            <div id="loading-overlay">
+                <div class="spinner"></div>
+                <p id="loading-status">Initializing QEMU...</p>
+            </div>
+        </div>
+
+        <div id="status-bar">
+            <span>Resolution: <strong id="resolution">--</strong></span>
+            <span>FPS: <strong id="fps">--</strong></span>
+            <span>Status: <strong id="status">Loading</strong></span>
+        </div>
+
+        <div class="controls">
+            <button id="btn-fullscreen">Fullscreen</button>
+            <button id="btn-capture">Capture Mouse</button>
+            <button id="btn-screenshot">Screenshot</button>
+            <button id="btn-terminal" style="display: none;">Toggle Terminal</button>
+        </div>
+
+        <div id="terminal-container">
+            <div id="terminal"></div>
+        </div>
+    </main>
+
+    <footer>
+        <p>Powered by <a href="https://github.com/ktock/qemu-wasm" target="_blank">QEMU-WASM</a> |
+           Display backend for browser-based VM graphics</p>
+    </footer>
+
+    <script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://unpkg.com/xterm-pty/index.js"></script>
+    <script type="module">
+        import { WasmDisplay } from './wasm-display.js';
+
+        // Configuration
+        const CONFIG = {
+            // Path to compiled QEMU WASM module
+            moduleScript: './out.js',
+            // QEMU command line arguments
+            qemuArgs: [
+                '-M', 'virt',
+                '-cpu', 'cortex-a72',
+                '-m', '512M',
+                '-device', 'virtio-gpu-pci',
+                '-display', 'wasm',
+                '-serial', 'pty'
+            ]
+        };
+
+        // UI Elements
+        const canvas = document.getElementById('qemu-display');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingStatus = document.getElementById('loading-status');
+        const statusEl = document.getElementById('status');
+        const resolutionEl = document.getElementById('resolution');
+        const fpsEl = document.getElementById('fps');
+        const btnFullscreen = document.getElementById('btn-fullscreen');
+        const btnCapture = document.getElementById('btn-capture');
+        const btnScreenshot = document.getElementById('btn-screenshot');
+        const btnTerminal = document.getElementById('btn-terminal');
+        const terminalContainer = document.getElementById('terminal-container');
+
+        let display = null;
+        let Module = null;
+
+        // Update loading status
+        function setLoadingStatus(message) {
+            loadingStatus.textContent = message;
+            console.log(message);
+        }
+
+        // Hide loading overlay
+        function hideLoading() {
+            loadingOverlay.style.display = 'none';
+            statusEl.textContent = 'Running';
+        }
+
+        // Update stats display
+        function updateStats() {
+            if (display) {
+                const stats = display.getStats();
+                fpsEl.textContent = stats.fps;
+                resolutionEl.textContent = `${display.width}x${display.height}`;
+            }
+            requestAnimationFrame(updateStats);
+        }
+
+        // Button handlers
+        btnFullscreen.addEventListener('click', () => {
+            const container = document.getElementById('display-container');
+            if (container.requestFullscreen) {
+                container.requestFullscreen();
+            } else if (container.webkitRequestFullscreen) {
+                container.webkitRequestFullscreen();
+            }
+        });
+
+        btnCapture.addEventListener('click', () => {
+            canvas.requestPointerLock();
+        });
+
+        btnScreenshot.addEventListener('click', () => {
+            const link = document.createElement('a');
+            link.download = `qemu-screenshot-${Date.now()}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        });
+
+        btnTerminal.addEventListener('click', () => {
+            terminalContainer.style.display =
+                terminalContainer.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // Initialize QEMU
+        async function init() {
+            try {
+                setLoadingStatus('Loading QEMU module...');
+
+                // Create Module configuration
+                Module = {
+                    arguments: CONFIG.qemuArgs,
+                    preRun: [],
+                    postRun: [],
+                    print: (text) => console.log(text),
+                    printErr: (text) => console.error(text),
+                    onRuntimeInitialized: () => {
+                        setLoadingStatus('Runtime initialized...');
+                    }
+                };
+
+                // Setup terminal if serial is enabled
+                if (typeof Terminal !== 'undefined' && typeof openpty === 'function') {
+                    const xterm = new Terminal({
+                        cursorBlink: true,
+                        theme: {
+                            background: '#000000',
+                            foreground: '#ffffff'
+                        }
+                    });
+                    xterm.open(document.getElementById('terminal'));
+
+                    const { master, slave } = openpty();
+                    xterm.loadAddon(master);
+                    Module.pty = slave;
+
+                    btnTerminal.style.display = 'inline-block';
+                }
+
+                // Dynamic import of QEMU module
+                setLoadingStatus('Loading QEMU binary...');
+
+                // Check if out.js exists (compiled QEMU)
+                // For demo, we'll show the display interface without actual QEMU
+                if (typeof window.initEmscriptenModule === 'function') {
+                    const instance = await window.initEmscriptenModule(Module);
+
+                    // Create display
+                    display = new WasmDisplay(canvas, Module, {
+                        targetFps: 60,
+                        enableInput: true,
+                        scaleToFit: true,
+                        onReady: () => {
+                            hideLoading();
+                            updateStats();
+                        },
+                        onResize: (w, h) => {
+                            resolutionEl.textContent = `${w}x${h}`;
+                        }
+                    });
+
+                    display.start();
+                } else {
+                    // Demo mode - show interface without QEMU
+                    setLoadingStatus('Demo mode: QEMU binary not loaded');
+                    setTimeout(() => {
+                        hideLoading();
+                        statusEl.textContent = 'Demo Mode';
+
+                        // Draw demo pattern
+                        const ctx = canvas.getContext('2d');
+                        const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+                        gradient.addColorStop(0, '#1a1a2e');
+                        gradient.addColorStop(1, '#0f3460');
+                        ctx.fillStyle = gradient;
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                        ctx.fillStyle = '#e94560';
+                        ctx.font = 'bold 24px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('QEMU WASM Display', canvas.width/2, canvas.height/2 - 20);
+                        ctx.fillStyle = '#888';
+                        ctx.font = '16px sans-serif';
+                        ctx.fillText('Compile QEMU with -display wasm to enable graphics', canvas.width/2, canvas.height/2 + 20);
+
+                        resolutionEl.textContent = `${canvas.width}x${canvas.height}`;
+                    }, 1000);
+                }
+
+            } catch (error) {
+                console.error('Failed to initialize QEMU:', error);
+                setLoadingStatus(`Error: ${error.message}`);
+                statusEl.textContent = 'Error';
+            }
+        }
+
+        // Start initialization
+        init();
+    </script>
+</body>
+</html>

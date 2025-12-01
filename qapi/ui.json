@@ -1482,6 +1482,10 @@
 #
 # @dbus: Start a D-Bus service for the display.  (Since 7.0)
 #
+# @wasm: WebAssembly/Emscripten display for browser-based rendering.
+#     Exports framebuffer to JavaScript for Canvas/WebGL display.
+#     (Since 9.0)
+#
 # Since: 2.12
 ##
 { 'enum'    : 'DisplayType',
@@ -1494,7 +1498,8 @@
     { 'name': 'curses', 'if': 'CONFIG_CURSES' },
     { 'name': 'cocoa', 'if': 'CONFIG_COCOA' },
     { 'name': 'spice-app', 'if': 'CONFIG_SPICE' },
-    { 'name': 'dbus', 'if': 'CONFIG_DBUS_DISPLAY' }
+    { 'name': 'dbus', 'if': 'CONFIG_DBUS_DISPLAY' },
+    { 'name': 'wasm', 'if': 'CONFIG_WASM_DISPLAY' }
   ]
 }
 
