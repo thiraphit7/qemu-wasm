@@ -34,4 +34,9 @@ if dbus_display
     audio_modules += {'dbus': module_ss}
 endif
 
+# WASM audio backend for Emscripten builds
+if host_machine.cpu_family() == 'wasm32'
+    system_ss.add(files('wasmaud.c'))
+endif
+
 modules += {'audio': audio_modules}
