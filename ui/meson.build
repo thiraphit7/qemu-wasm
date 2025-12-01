@@ -34,6 +34,7 @@ system_ss.add(when: cocoa, if_true: files('cocoa.m'))
 # WASM display backend for Emscripten builds
 if host_machine.cpu_family() == 'wasm32'
   system_ss.add(files('wasm-display.c'))
+  system_ss.add(files('wasm-virtio-gpu.c'))
 endif
 
 vnc_ss = ss.source_set()

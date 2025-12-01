@@ -10,6 +10,11 @@ system_ss.add(files(
 system_ss.add(when: coreaudio, if_true: files('coreaudio.m'))
 system_ss.add(when: dsound, if_true: files('dsoundaudio.c', 'audio_win_int.c'))
 
+# WASM audio backend for Emscripten builds
+if host_machine.cpu_family() == 'wasm32'
+  system_ss.add(files('wasmaudio.c'))
+endif
+
 audio_modules = {}
 foreach m : [
   ['alsa', alsa, files('alsaaudio.c')],

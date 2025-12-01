@@ -12,6 +12,9 @@ with any browser that supports WebAssembly, including Safari, Chrome, and Firefo
 ## Files
 
 - `wasm-display.js` - JavaScript class for integrating with the display backend
+- `wasm-webgpu.js` - WebGPU/WebGL accelerated rendering with VirtIO-GPU hooks
+- `wasm-audio.js` - Web Audio API integration (imported from wasmaudio.c)
+- `wasm-ios-safari.js` - iOS Safari optimizations (memory, audio, touch)
 - `index.html` - Example HTML page with full display integration
 
 ## Building QEMU with WASM Display
@@ -222,4 +225,203 @@ void wasm_send_keyboard_event(int keycode, bool down);
 void wasm_send_mouse_motion(int x, int y);
 void wasm_send_mouse_button(int button, bool down);
 void wasm_send_mouse_wheel(int dx, int dy);
+```
+
+---
+
+## WebGPU/WebGL Acceleration (Experimental)
+
+The `wasm-webgpu.js` module provides GPU-accelerated rendering with automatic
+fallback between backends.
+
+### Features
+
+- **Native WebGPU** - Best performance on supported browsers
+- **WebGPU Compatibility Mode** - WebGL-backed WebGPU (experimental in Chrome)
+- **WebGL 2.0 Fallback** - Broad compatibility
+- **WebGL 1.0 Fallback** - Maximum compatibility
+
+### Usage
+
+```javascript
+import { WasmWebGPU } from './wasm-webgpu.js';
+
+const gpu = new WasmWebGPU(canvas, Module, {
+    preferWebGPU: true,           // Try WebGPU first
+    enableWebGPUCompat: false,    // Enable WebGPU compat mode (experimental)
+    antialias: false,
+    powerPreference: 'high-performance'
+});
+
+// Initialize (async - waits for GPU adapter)
+await gpu.init();
+
+console.log('Using backend:', gpu.getBackendName());
+```
+
+### VirtIO-GPU Integration
+
+The WebGPU module automatically handles VirtIO-GPU callbacks:
+
+```javascript
+// These are called by QEMU's VirtIO-GPU device
+window.onWasmGpuResourceCreate = (resourceId, width, height, format) => {};
+window.onWasmGpuTextureUpload = (resourceId, x, y, w, h, data) => {};
+window.onWasmGpuFlush = (scanoutId, resourceId) => {};
+window.onWasmGpu3DContextCreate = (ctxId, capsetId, name) => {};
+window.onWasmGpu3DSubmit = (ctxId, cmdBuffer) => {};
+```
+
+---
+
+## Web Audio API Support
+
+The WASM audio backend provides sound output/input via Web Audio API.
+
+### Audio Driver Configuration
+
+```bash
+# Use WASM audio driver
+qemu-system-aarch64 ... -audiodev wasm,id=audio0 -device intel-hda -device hda-output,audiodev=audio0
+```
+
+### JavaScript Integration
+
+```javascript
+// Audio is automatically initialized, but iOS requires user gesture
+document.addEventListener('click', () => {
+    if (Module._wasm_audio_resume) {
+        Module._wasm_audio_resume();
+    }
+});
+
+// Monitor audio state
+window.onWasmAudioUnlocked = () => {
+    console.log('Audio playback enabled');
+};
+```
+
+### Exported C Functions
+
+```c
+// Initialize audio backend
+int wasm_audio_init(const WasmAudioConfig *config);
+
+// Resume audio (required after user gesture on iOS)
+int wasm_audio_resume(void);
+
+// Write audio samples
+size_t wasm_audio_write(const void *data, size_t samples);
+
+// Request microphone access
+int wasm_audio_request_input(void);
+
+// Read captured audio
+size_t wasm_audio_read(void *data, size_t samples);
+```
+
+---
+
+## iOS Safari Optimizations
+
+The `wasm-ios-safari.js` module provides iOS-specific optimizations.
+
+### Features
+
+- **Memory Pressure Handling** - Detects and responds to low memory
+- **Audio Gesture Handler** - Automatically unlocks audio on user gesture
+- **Touch Optimization** - Prevents double-tap zoom, pull-to-refresh
+- **Viewport Fixes** - Handles dynamic toolbar, safe areas
+- **WASM Streaming Fallback** - Handles iOS compilation quirks
+
+### Usage
+
+```javascript
+import { IOSSafariOptimizer } from './wasm-ios-safari.js';
+
+const optimizer = new IOSSafariOptimizer({
+    enableMemoryManagement: true,
+    enableAudioGestureHandler: true,
+    enableTouchOptimization: true,
+    enableViewportFix: true
+});
+
+optimizer.init();
+
+// Check device info
+console.log(optimizer.getDeviceInfo());
+// { isIOS: true, isSafari: true, isIPad: false, ... }
+```
+
+### Handling App Lifecycle
+
+```javascript
+// Called when app goes to background
+window.onWasmBackground = () => {
+    // Pause emulation, save state
+};
+
+// Called when app returns to foreground
+window.onWasmForeground = () => {
+    // Resume emulation
+};
+
+// Called on memory pressure
+window.onWasmMemoryWarning = () => {
+    // Free caches, reduce memory usage
+};
+```
+
+---
+
+## Full Example with All Features
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>QEMU WASM</title>
+</head>
+<body>
+    <canvas id="display"></canvas>
+    <script type="module">
+        import { WasmDisplay } from './wasm-display.js';
+        import { WasmWebGPU } from './wasm-webgpu.js';
+        import { IOSSafariOptimizer } from './wasm-ios-safari.js';
+
+        // Initialize iOS optimizations first
+        const ios = new IOSSafariOptimizer();
+        ios.init();
+
+        // Initialize QEMU
+        const Module = {
+            arguments: [
+                '-M', 'virt',
+                '-cpu', 'cortex-a72',
+                '-m', '512M',
+                '-device', 'virtio-gpu-pci',
+                '-display', 'wasm',
+                '-audiodev', 'wasm,id=audio0',
+                '-device', 'intel-hda',
+                '-device', 'hda-output,audiodev=audio0'
+            ]
+        };
+
+        // Start QEMU
+        const canvas = document.getElementById('display');
+
+        // Try GPU-accelerated rendering first
+        const gpu = new WasmWebGPU(canvas, Module, { preferWebGPU: true });
+        await gpu.init();
+
+        // Fall back to software rendering if needed
+        if (gpu.getBackend() === 0) {
+            const display = new WasmDisplay(canvas, Module);
+            display.start();
+        }
+    </script>
+</body>
+</html>
 ```
